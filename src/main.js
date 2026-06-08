@@ -62,9 +62,9 @@ function drawPlaceholder() {
 
   const cx = w * 0.5;
   const cy = h * 0.52;
-  const headR = Math.min(w, h) * 0.08;
-  const anchorY = cy - headR * 1.9;
-  const pulse = Math.sin(fakeT) * 5;
+  const headR = Math.min(w, h) * 0.2;
+  const anchorY = cy - headR * 2.4;
+  const pulse = Math.sin(fakeT) * 10;
 
   ctx.save();
 
