@@ -29,16 +29,22 @@ let lastVideoTime  = -1;
 // Smoothing: exponential moving average
 // 0.65 = faster response (was 0.35), still damps micro-jitter
 const ALPHA = 0.65;
-let smoothHead  = null;        // { x, y, r }
+let smoothHead  = null;        // { x, y, r, topY }
 let smoothAtoms = [null, null]; // left & right terminal atoms
 
+// lerpPt interpolates ALL numeric fields present in `next`.
+// This prevents fields added later (like topY) from being silently dropped.
 function lerpPt(prev, next, t) {
   if (!prev) return { ...next };
-  return {
-    x: prev.x + (next.x - prev.x) * t,
-    y: prev.y + (next.y - prev.y) * t,
-    r: (prev.r ?? next.r) + ((next.r ?? prev.r) - (prev.r ?? next.r)) * t
-  };
+  const out = {};
+  for (const k of Object.keys(next)) {
+    const pv = prev[k];
+    const nv = next[k];
+    out[k] = (typeof pv === 'number' && typeof nv === 'number')
+      ? pv + (nv - pv) * t
+      : nv;
+  }
+  return out;
 }
 
 // ─── MediaPipe init ─────────────────────────────────────────────────────────
@@ -219,11 +225,13 @@ function drawOverlay(headPt, atoms, key) {
   ctx.clearRect(0, 0, w, h);
 
   const { x: cx, y: cy, r: headR, topY } = headPt;
-  // Anchor sits just above the head top landmark — not a fixed multiple of headR
-  const anchor = { x: cx, y: topY - 28 };
+
+  // Guard: if topY is somehow NaN/undefined, fall back to geometric top
+  const safeTopY = (Number.isFinite(topY) ? topY : cy - headR);
+  const anchor   = { x: cx, y: safeTopY - 28 };
 
   drawHeadCircle(cx, cy, headR);
-  drawConnector(cx, topY, cx, anchor.y + 10);
+  drawConnector(cx, safeTopY, cx, anchor.y + 10);
 
   if (key === 'He') {
     drawAtom(anchor.x, anchor.y, 24, COLORS.He, 'He');
@@ -342,14 +350,13 @@ function drawPlaceholder() {
   }
 }
 
-// ─── Palm center helper ───────────────────────────────────────────────────────
+// ─── Palm center helper ──────────────────────────────────────────────────────
 // Averages landmarks 0 (wrist), 5, 9, 13, 17 (MCP knuckles)
-// This is much more stable than fingertip lm8 under open-hand conditions.
 function palmCenter(hand, w, h) {
   const idxs = [0, 5, 9, 13, 17];
   let sx = 0, sy = 0;
   for (const i of idxs) {
-    sx += (1 - hand[i].x) * w;   // mirror for selfie
+    sx += (1 - hand[i].x) * w;
     sy += hand[i].y * h;
   }
   return { x: sx / idxs.length, y: sy / idxs.length, r: 0 };
@@ -368,36 +375,28 @@ function detectFrame() {
   const w = canvas.clientWidth  || canvas.width;
   const h = canvas.clientHeight || canvas.height;
 
-  // ── Face landmarks used:
-  //   lm[10]  = top of head (forehead centre)
-  //   lm[152] = chin
-  //   lm[234] = left cheek edge  (right side of screen, mirrored)
-  //   lm[454] = right cheek edge (left side of screen, mirrored)
-  //
-  // headCX: average of mirrored cheek landmarks → true horizontal centre
-  // headCY: midpoint of top & chin → vertical centre
-  // anchor: sits just above lm[10] (face top), not a fixed headR multiple
+  // ── Face
   let headPt = null;
   if (faceResult.faceLandmarks?.length > 0) {
-    const lm      = faceResult.faceLandmarks[0];
-    const top     = lm[10];
-    const chin    = lm[152];
-    const lCheek  = lm[234];   // appears on right of mirrored video
-    const rCheek  = lm[454];   // appears on left of mirrored video
-    // Mirror x (1 - x) for selfie mode
-    const headCX  = ((1 - lCheek.x) + (1 - rCheek.x)) / 2 * w;
-    const headCY  = ((top.y + chin.y) / 2) * h;
-    const rawR    = Math.abs(chin.y - top.y) * h * 0.58;
-    const topY    = top.y * h;
-    smoothHead    = lerpPt(smoothHead, { x: headCX, y: headCY, r: rawR, topY }, ALPHA);
-    headPt        = smoothHead;
+    const lm     = faceResult.faceLandmarks[0];
+    const top    = lm[10];
+    const chin   = lm[152];
+    const lCheek = lm[234];
+    const rCheek = lm[454];
+    const headCX = ((1 - lCheek.x) + (1 - rCheek.x)) / 2 * w;
+    const headCY = ((top.y + chin.y) / 2) * h;
+    const rawR   = Math.abs(chin.y - top.y) * h * 0.58;
+    const topY   = top.y * h;
+    // lerpPt now handles all numeric keys including topY
+    smoothHead   = lerpPt(smoothHead, { x: headCX, y: headCY, r: rawR, topY }, ALPHA);
+    headPt       = smoothHead;
     setStatus(faceDot, faceStatus, 'Face detected ✓', 'ready');
   } else {
     smoothHead = null;
     setStatus(faceDot, faceStatus, 'Show your face', 'idle');
   }
 
-  // ── Hands: palm center (lm 0,5,9,13,17) instead of fingertip lm8
+  // ── Hands: palm center
   const atomMap = { left: null, right: null };
   if (handResult.landmarks?.length > 0) {
     handResult.landmarks.forEach((hand, i) => {
@@ -452,7 +451,6 @@ async function startCamera() {
       audio: false
     });
     video.srcObject = stream;
-    // Resize canvas once video dimensions are known
     video.addEventListener('loadedmetadata', resizeCanvas, { once: true });
     await video.play();
     resizeCanvas();
