@@ -27,7 +27,8 @@ let fakeT          = 0;
 let lastVideoTime  = -1;
 
 // Smoothing: exponential moving average
-const ALPHA = 0.35;
+// 0.65 = faster response (was 0.35), still damps micro-jitter
+const ALPHA = 0.65;
 let smoothHead  = null;        // { x, y, r }
 let smoothAtoms = [null, null]; // left & right terminal atoms
 
@@ -41,7 +42,6 @@ function lerpPt(prev, next, t) {
 }
 
 // ─── MediaPipe init ─────────────────────────────────────────────────────────
-// unpkg serves .mjs with correct application/javascript MIME type
 const MP_VERSION  = '0.10.14';
 const MP_BASE     = `https://unpkg.com/@mediapipe/tasks-vision@${MP_VERSION}`;
 const WASM_PATH   = `${MP_BASE}/wasm`;
@@ -218,11 +218,12 @@ function drawOverlay(headPt, atoms, key) {
   const h = canvas.clientHeight || canvas.height;
   ctx.clearRect(0, 0, w, h);
 
-  const { x: cx, y: cy, r: headR } = headPt;
-  const anchor = { x: cx, y: cy - headR * 2.6 };
+  const { x: cx, y: cy, r: headR, topY } = headPt;
+  // Anchor sits just above the head top landmark — not a fixed multiple of headR
+  const anchor = { x: cx, y: topY - 28 };
 
   drawHeadCircle(cx, cy, headR);
-  drawConnector(cx, cy - headR, cx, anchor.y + 12);
+  drawConnector(cx, topY, cx, anchor.y + 10);
 
   if (key === 'He') {
     drawAtom(anchor.x, anchor.y, 24, COLORS.He, 'He');
@@ -237,7 +238,7 @@ function drawOverlay(headPt, atoms, key) {
     drawAtom(term.x,  term.y,   18, c2, l2);
 
   } else {
-    // CO2 or H2O — both need two terminal atoms
+    // CO2 or H2O — need two terminal atoms
     const left  = atoms[0] || { x: anchor.x - 95, y: anchor.y };
     const right = atoms[1] || { x: anchor.x + 95, y: anchor.y };
     const theta = computeAngle(left, anchor, right);
@@ -276,7 +277,6 @@ function drawPlaceholder() {
   const pulse   = Math.sin(fakeT) * 10;
 
   ctx.save();
-  // Dashed head circle
   ctx.strokeStyle = 'rgba(79,152,163,0.45)';
   ctx.lineWidth   = 2;
   ctx.setLineDash([5, 5]);
@@ -284,7 +284,6 @@ function drawPlaceholder() {
   ctx.arc(cx, cy, headR, 0, Math.PI * 2);
   ctx.stroke();
   ctx.setLineDash([]);
-  // Connector
   ctx.strokeStyle = 'rgba(79,152,163,0.28)';
   ctx.lineWidth   = 1;
   ctx.beginPath();
@@ -343,6 +342,19 @@ function drawPlaceholder() {
   }
 }
 
+// ─── Palm center helper ───────────────────────────────────────────────────────
+// Averages landmarks 0 (wrist), 5, 9, 13, 17 (MCP knuckles)
+// This is much more stable than fingertip lm8 under open-hand conditions.
+function palmCenter(hand, w, h) {
+  const idxs = [0, 5, 9, 13, 17];
+  let sx = 0, sy = 0;
+  for (const i of idxs) {
+    sx += (1 - hand[i].x) * w;   // mirror for selfie
+    sy += hand[i].y * h;
+  }
+  return { x: sx / idxs.length, y: sy / idxs.length, r: 0 };
+}
+
 // ─── Per-frame MediaPipe detect ──────────────────────────────────────────────
 function detectFrame() {
   if (!mpReady || !stream || video.readyState < 2) return null;
@@ -356,18 +368,28 @@ function detectFrame() {
   const w = canvas.clientWidth  || canvas.width;
   const h = canvas.clientHeight || canvas.height;
 
-  // ── Face: nose tip (lm 1), top of head (lm 10), chin (lm 152)
+  // ── Face landmarks used:
+  //   lm[10]  = top of head (forehead centre)
+  //   lm[152] = chin
+  //   lm[234] = left cheek edge  (right side of screen, mirrored)
+  //   lm[454] = right cheek edge (left side of screen, mirrored)
+  //
+  // headCX: average of mirrored cheek landmarks → true horizontal centre
+  // headCY: midpoint of top & chin → vertical centre
+  // anchor: sits just above lm[10] (face top), not a fixed headR multiple
   let headPt = null;
   if (faceResult.faceLandmarks?.length > 0) {
     const lm      = faceResult.faceLandmarks[0];
     const top     = lm[10];
     const chin    = lm[152];
-    const nose    = lm[1];
-    // Mirror x for selfie view
-    const headCX  = (1 - nose.x) * w;
+    const lCheek  = lm[234];   // appears on right of mirrored video
+    const rCheek  = lm[454];   // appears on left of mirrored video
+    // Mirror x (1 - x) for selfie mode
+    const headCX  = ((1 - lCheek.x) + (1 - rCheek.x)) / 2 * w;
     const headCY  = ((top.y + chin.y) / 2) * h;
     const rawR    = Math.abs(chin.y - top.y) * h * 0.58;
-    smoothHead    = lerpPt(smoothHead, { x: headCX, y: headCY, r: rawR }, ALPHA);
+    const topY    = top.y * h;
+    smoothHead    = lerpPt(smoothHead, { x: headCX, y: headCY, r: rawR, topY }, ALPHA);
     headPt        = smoothHead;
     setStatus(faceDot, faceStatus, 'Face detected ✓', 'ready');
   } else {
@@ -375,15 +397,13 @@ function detectFrame() {
     setStatus(faceDot, faceStatus, 'Show your face', 'idle');
   }
 
-  // ── Hands: index fingertip (lm 8), mirrored for selfie
+  // ── Hands: palm center (lm 0,5,9,13,17) instead of fingertip lm8
   const atomMap = { left: null, right: null };
   if (handResult.landmarks?.length > 0) {
     handResult.landmarks.forEach((hand, i) => {
-      const tip  = hand[8];
-      // MediaPipe handedness is mirrored in selfie — swap Left/Right
       const side = handResult.handedness[i]?.[0]?.categoryName ?? 'Left';
-      const slot = side === 'Right' ? 0 : 1; // 0=left-of-screen, 1=right-of-screen
-      const raw  = { x: (1 - tip.x) * w, y: tip.y * h, r: 0 };
+      const slot = side === 'Right' ? 0 : 1;
+      const raw  = palmCenter(hand, w, h);
       smoothAtoms[slot] = lerpPt(smoothAtoms[slot], raw, ALPHA);
       atomMap[slot === 0 ? 'left' : 'right'] = smoothAtoms[slot];
     });
@@ -391,7 +411,7 @@ function detectFrame() {
     smoothAtoms = [null, null];
   }
 
-  // ── Hand status messages
+  // ── Hand status
   const key         = select.value;
   const needs2Hands = ['CO2', 'H2O'].includes(key);
   const handCount   = (atomMap.left ? 1 : 0) + (atomMap.right ? 1 : 0);
@@ -432,6 +452,8 @@ async function startCamera() {
       audio: false
     });
     video.srcObject = stream;
+    // Resize canvas once video dimensions are known
+    video.addEventListener('loadedmetadata', resizeCanvas, { once: true });
     await video.play();
     resizeCanvas();
     setStatus(cameraDot, cameraStatus, 'Camera live ✓', 'ready');
