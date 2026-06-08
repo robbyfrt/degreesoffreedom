@@ -5,8 +5,6 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Degrees of Freedom</title>
   <link href="https://api.fontshare.com/v2/css?f[]=satoshi@400,500,700&display=swap" rel="stylesheet">
-  <!-- MediaPipe Tasks Vision (UMD bundle — works without a bundler) -->
-  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision/vision_bundle.js" crossorigin="anonymous"></script>
   <style>
     :root, [data-theme="light"] {
       --color-bg: #f7f6f2;
@@ -61,7 +59,8 @@
       padding: 0.7rem 0.9rem;
     }
     button { cursor: pointer; }
-    button:disabled { opacity: 0.5; cursor: default; }
+    button:hover { background: var(--color-primary); color: #fff; border-color: var(--color-primary); }
+    button:disabled { opacity: 0.55; pointer-events: none; }
     .app {
       max-width: 1280px;
       margin: 0 auto;
@@ -139,14 +138,28 @@
       padding: 0.35rem 0.7rem;
     }
     .dot {
-      width: 0.6rem;
-      height: 0.6rem;
+      width: 0.6rem; height: 0.6rem;
       border-radius: 50%;
       background: var(--color-warning);
       flex-shrink: 0;
     }
     .dot.ready { background: var(--color-success); }
     .dot.error { background: var(--color-error); }
+    .angle-pill {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.45rem;
+      border: 1px solid var(--color-border);
+      background: var(--color-surface-2);
+      border-radius: 999px;
+      padding: 0.35rem 0.8rem;
+      font-size: 0.9rem;
+      color: var(--color-text-muted);
+      min-width: 160px;
+    }
+    #angle-label[data-geo="linear"]     { color: var(--color-primary); }
+    #angle-label[data-geo="bent"]       { color: var(--color-success); }
+    #angle-label[data-geo="ambiguous"]  { color: var(--color-warning); }
     table {
       width: 100%;
       border-collapse: collapse;
@@ -159,8 +172,6 @@
       vertical-align: top;
     }
     th { color: var(--color-text-muted); font-weight: 500; }
-    td { color: var(--color-primary); font-weight: 600; }
-    td:first-child { color: var(--color-text); font-weight: 400; }
     .checklist {
       display: grid;
       grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
@@ -172,21 +183,13 @@
       border-radius: var(--radius-lg);
       background: var(--color-surface-2);
     }
-    .check small { color: var(--color-text-muted); display: block; margin-top: 0.4rem; font-size: 0.88rem; }
+    .check small { color: var(--color-text-muted); display: block; margin-top: 0.4rem; }
     .footer-note {
       color: var(--color-text-muted);
-      font-size: 0.95rem;
+      font-size: 0.9rem;
       margin-top: 0.8rem;
+      line-height: 1.5;
     }
-    .hint {
-      background: var(--color-surface-2);
-      border: 1px solid var(--color-border);
-      border-radius: var(--radius-lg);
-      padding: var(--space-4);
-      font-size: 0.93rem;
-      color: var(--color-text-muted);
-    }
-    .hint strong { color: var(--color-text); }
     .sr-only {
       position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px;
       overflow: hidden; clip: rect(0,0,0,0); white-space: nowrap; border: 0;
@@ -202,7 +205,7 @@
     <header class="header">
       <div class="title-wrap">
         <h1>Degrees of Freedom</h1>
-        <p>Use your face and hands as atoms. Explore translation, rotation, bending, dipole changes, and symmetry across He, N₂, CO, CO₂, and H₂O.</p>
+        <p>Point your face and hands at the camera. Your face anchors the central atom; each index finger becomes a terminal atom. Explore vibrations, symmetry, and IR/Raman activity live.</p>
       </div>
       <div class="controls">
         <label>
@@ -227,12 +230,12 @@
           <canvas id="overlay"></canvas>
         </div>
         <div class="card-body">
-          <h2>Camera overlay</h2>
-          <p>Molecule floats above your forehead. Two index fingertips control the terminal atoms; face mesh drives the central atom anchor.</p>
+          <h2>Live overlay</h2>
           <div class="statusbar">
             <span class="pill"><span id="camera-dot" class="dot"></span><span id="camera-status">Camera idle</span></span>
-            <span class="pill"><span id="face-dot" class="dot"></span><span id="face-status">Face tracker idle</span></span>
-            <span class="pill"><span id="hand-dot" class="dot"></span><span id="hand-status">Hand tracker idle</span></span>
+            <span class="pill"><span id="face-dot" class="dot"></span><span id="face-status">Face not ready</span></span>
+            <span class="pill"><span id="hand-dot" class="dot"></span><span id="hand-status">Hands not ready</span></span>
+            <span class="angle-pill">⟨θ⟩ <span id="angle-label">—</span></span>
           </div>
         </div>
       </article>
@@ -252,14 +255,6 @@
         <div class="checklist" id="checklist"></div>
       </div>
     </section>
-
-    <div class="hint">
-      <strong>How to use:</strong> Click <em>Start camera</em> and wait ~2 s for the models to download.
-      Raise both index fingertips to control the terminal atoms.
-      For <strong>CO₂</strong> keep arms wide and level → linear geometry.
-      For <strong>H₂O</strong> bring fingertips closer and angled downward → bent geometry.
-      The teal dot above your forehead is the face anchor; pink/green rings are your fingertips.
-    </div>
   </main>
 
   <script type="module" src="./src/main.js"></script>
