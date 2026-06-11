@@ -18,6 +18,7 @@ const faceStatus   = document.getElementById('face-status');
 const handStatus   = document.getElementById('hand-status');
 const angleLabel   = document.getElementById('angle-label');
 const motionLabel  = document.getElementById('motion-label');
+const motionDot    = document.getElementById('motion-dot');
 
 // ─── Constants ───────────────────────────────────────────────────────────────
 const ALPHA        = 0.65;   // EMA smoothing factor
@@ -73,8 +74,6 @@ function classifyGeometry(theta) {
 }
 
 // ─── Equilibrium constraint ───────────────────────────────────────────────────
-// Rotate terminal atoms so the A–B–C angle stays within ANGLE_CLAMP degrees
-// of the molecule's equilibrium angle. Bond lengths are NOT constrained.
 function constrainAngle(A, B, C, eqDeg) {
   if (eqDeg === null) return { A, C };
   const rawDeg = angleDeg(A, B, C);
@@ -83,15 +82,8 @@ function constrainAngle(A, B, C, eqDeg) {
   const delta = rawDeg - eqDeg;
   if (Math.abs(delta) <= ANGLE_CLAMP) return { A, C };
 
-  // How much to rotate each terminal atom around B to bring angle back
-  const targetDeg  = eqDeg + clamp(delta, -ANGLE_CLAMP, ANGLE_CLAMP);
-  const targetRad  = targetDeg * Math.PI / 180;
-
-  // Current half-angle each arm makes relative to bisector
-  const midAngle = Math.atan2(
-    (A.y - B.y) + (C.y - B.y),
-    (A.x - B.x) + (C.x - B.x)
-  );
+  const targetDeg = eqDeg + clamp(delta, -ANGLE_CLAMP, ANGLE_CLAMP);
+  const targetRad = targetDeg * Math.PI / 180;
 
   const rA = Math.hypot(A.x - B.x, A.y - B.y);
   const rC = Math.hypot(C.x - B.x, C.y - B.y);
@@ -102,15 +94,10 @@ function constrainAngle(A, B, C, eqDeg) {
     (A.x - B.x + C.x - B.x)
   );
 
-  const newA = {
-    x: B.x + rA * Math.cos(bisector - half),
-    y: B.y + rA * Math.sin(bisector - half)
+  return {
+    A: { x: B.x + rA * Math.cos(bisector - half), y: B.y + rA * Math.sin(bisector - half) },
+    C: { x: B.x + rC * Math.cos(bisector + half), y: B.y + rC * Math.sin(bisector + half) }
   };
-  const newC = {
-    x: B.x + rC * Math.cos(bisector + half),
-    y: B.y + rC * Math.sin(bisector + half)
-  };
-  return { A: newA, C: newC };
 }
 
 // ─── Position history & motion classification ─────────────────────────────────
@@ -120,7 +107,6 @@ function pushHistory(left, right, anchor) {
 }
 
 function velocityFromHistory(slot) {
-  // slot: 'left' | 'right' | 'anchor'
   const n = history.length;
   if (n < VEL_WINDOW + 1) return { vx: 0, vy: 0 };
   const old = history[n - VEL_WINDOW - 1][slot];
@@ -136,24 +122,70 @@ function classifyMotion(key) {
   if (n < VEL_WINDOW + 2) return null;
 
   const vA = velocityFromHistory('anchor');
+  const comSpeedA = Math.hypot(vA.vx, vA.vy);
 
+  // ── Single atom (He) ──────────────────────────────────────────────────────
   if (key === 'He') {
-    const speed = Math.hypot(vA.vx, vA.vy);
-    return speed > 0.008 ? 'translation' : 'still';
+    return comSpeedA > 0.008 ? 'translation' : 'still';
   }
 
-  const cur  = history[n - 1];
+  const cur = history[n - 1];
+
+  // ── Diatomics (N₂, CO) — anchor + right terminal ──────────────────────────
+  if (key === 'N2' || key === 'CO') {
+    if (!cur.right) return null;
+    const vT = velocityFromHistory('right');
+
+    const avgVx = (vA.vx + vT.vx) / 2;
+    const avgVy = (vA.vy + vT.vy) / 2;
+    const comSpeed = Math.hypot(avgVx, avgVy);
+
+    // Residuals
+    const rAx = vA.vx - avgVx, rAy = vA.vy - avgVy;
+    const rTx = vT.vx - avgVx, rTy = vT.vy - avgVy;
+    const residualMax = Math.max(Math.hypot(rAx, rAy), Math.hypot(rTx, rTy));
+
+    if (comSpeed > 0.012 && comSpeed > residualMax * 1.8) return 'translation';
+
+    // Bond axis
+    const bx = cur.right.x - cur.anchor.x;
+    const by = cur.right.y - cur.anchor.y;
+    const bLen = Math.hypot(bx, by) || 1;
+    const ux = bx / bLen, uy = by / bLen;
+    // Perpendicular
+    const px = -uy, py = ux;
+
+    const rAlong = rAx * ux + rAy * uy;
+    const rTalong = rTx * ux + rTy * uy;
+    const rAperp = rAx * px + rAy * py;
+    const rTperp = rTx * px + rTy * py;
+
+    // Stretch: atoms moving oppositely along bond axis
+    const stretchSignal = Math.abs(rAlong - rTalong);
+    // Rotation: atoms moving oppositely perpendicular to bond axis
+    const rotSignal = (rAperp * rTperp < 0)
+      ? (Math.abs(rAperp) + Math.abs(rTperp)) * 0.5
+      : 0;
+
+    const signals = [
+      { name: 'stretch',    val: stretchSignal },
+      { name: 'rotation',   val: rotSignal * 1.2 },
+    ];
+
+    const best = signals.reduce((a, b) => a.val > b.val ? a : b);
+    return best.val > 0.002 ? best.name : 'still';
+  }
+
+  // ── Triatomics (CO₂, H₂O) ────────────────────────────────────────────────
   if (!cur.left || !cur.right) return null;
 
   const vL = velocityFromHistory('left');
   const vR = velocityFromHistory('right');
 
-  // Translation: all three atoms moving in roughly the same direction
   const avgVx = (vL.vx + vR.vx + vA.vx) / 3;
   const avgVy = (vL.vy + vR.vy + vA.vy) / 3;
   const comSpeed = Math.hypot(avgVx, avgVy);
 
-  // Residual velocities (subtract COM motion)
   const rLx = vL.vx - avgVx, rLy = vL.vy - avgVy;
   const rRx = vR.vx - avgVx, rRy = vR.vy - avgVy;
   const rAx = vA.vx - avgVx, rAy = vA.vy - avgVy;
@@ -164,26 +196,20 @@ function classifyMotion(key) {
 
   if (comSpeed > 0.012 && comSpeed > residualMax * 1.8) return 'translation';
 
-  // Bond axis unit vector (left → right)
   const bx = cur.right.x - cur.left.x;
   const by = cur.right.y - cur.left.y;
   const bLen = Math.hypot(bx, by) || 1;
   const ux = bx / bLen, uy = by / bLen;
-  // Perpendicular
   const px = -uy, py = ux;
 
-  // Project residual velocities onto bond axis and perpendicular
-  const rLalong  = rLx * ux  + rLy * uy;
-  const rRalong  = rRx * ux  + rRy * uy;
-  const rLperp   = rLx * px  + rLy * py;
-  const rRperp   = rRx * px  + rRy * py;
+  const rLalong  = rLx * ux + rLy * uy;
+  const rRalong  = rRx * ux + rRy * uy;
+  const rLperp   = rLx * px + rLy * py;
+  const rRperp   = rRx * px + rRy * py;
 
-  // Sym stretch: terminals move away from (or toward) center simultaneously
-  const symStretch  = -(rLalong) + rRalong;   // both outward: L goes left(neg), R goes right(pos)
-  // Asym stretch: one in, one out
-  const asymStretch = rLalong + rRalong;       // both going same direction along axis = asym
-  // Bend: terminals move in same perpendicular direction (the bending mode)
-  const bendSignal  = rLperp * rRperp;         // positive if same sign
+  const symStretch  = -(rLalong) + rRalong;
+  const asymStretch = rLalong + rRalong;
+  const bendSignal  = rLperp * rRperp;
 
   const signals = [
     { name: 'sym-stretch',  val: Math.abs(symStretch) },
@@ -191,67 +217,100 @@ function classifyMotion(key) {
     { name: 'bend',         val: bendSignal > 0 ? Math.abs(rLperp) : 0 },
   ];
 
-  // Rotation: check if anchor and terminals circulate around COM
   const comX = (cur.left.x + cur.right.x + cur.anchor.x) / 3;
   const comY = (cur.left.y + cur.right.y + cur.anchor.y) / 3;
   const rotL = (cur.left.x  - comX) * vL.vy - (cur.left.y  - comY) * vL.vx;
   const rotR = (cur.right.x - comX) * vR.vy - (cur.right.y - comY) * vR.vx;
-  const rotSignal = Math.abs(rotL + rotR);
-  signals.push({ name: 'rotation', val: rotSignal * 0.005 });
+  signals.push({ name: 'rotation', val: Math.abs(rotL + rotR) * 0.005 });
 
   const best = signals.reduce((a, b) => a.val > b.val ? a : b);
   return best.val > 0.002 ? best.name : 'still';
 }
 
 // ─── Dipole arrow ─────────────────────────────────────────────────────────────
-// For triatomics: compute vector sum of bond dipoles.
-// Each bond dipole points from + to − end (partial charges vary by molecule).
-// We approximate: for O–C–O (CO2) and O–H–H (H2O), the terminal-to-central
-// vector is the negative pole direction.
-// For CO diatomic: fixed direction C→O.
-const DIPOLE_COLOR = 'rgba(253,171,67,0.95)'; // warm amber
-const DIPOLE_SCALE = 90; // max arrow length in canvas pixels
+// Dipole is computed as the vector sum of individual bond dipoles.
+//
+// Bond length scaling:
+//   Each bond dipole magnitude scales linearly with the current bond length
+//   relative to the equilibrium bond length (stored as eqBondPx derived from
+//   the canvas layout).  This lets students see the dipole grow when they
+//   stretch a bond and shrink when they compress it — correct physics for a
+//   harmonic approximation.
+//
+// H₂O asymmetric mode:
+//   When the two O–H bonds have different lengths the vector sum of the two
+//   bond dipoles does NOT cancel along the symmetry axis, so the net μ tilts
+//   slightly toward the longer bond.  This emerges naturally from the vector
+//   summation — no special-casing needed.
+
+const DIPOLE_COLOR = 'rgba(253,171,67,0.95)';
+const DIPOLE_SCALE = 90;
+
+// Equilibrium bond lengths in canvas-pixel space — set once per molecule draw
+// so we can normalise the stretch factor.  Updated by drawOverlay each frame.
+let _eqBondPx = 90; // initial guess, overwritten each frame
 
 function drawDipole(anchor, left, right, key) {
   const mol = MOLECULES[key];
-  if (mol.dipoleMagnitude === 0 && key !== 'CO2' && key !== 'H2O') return;
 
   let dx = 0, dy = 0;
 
-  if (key === 'CO') {
-    // Bond vector from C (anchor) toward O (right or left terminal)
+  if (key === 'CO' || key === 'N2') {
+    if (mol.dipoleMagnitude === 0) return;  // N₂ — no dipole
     const term = right || left;
     if (!term) return;
-    const len = Math.hypot(term.x - anchor.x, term.y - anchor.y) || 1;
-    dx = (term.x - anchor.x) / len * mol.dipoleMagnitude;
-    dy = (term.y - anchor.y) / len * mol.dipoleMagnitude;
+    const currentLen = Math.hypot(term.x - anchor.x, term.y - anchor.y);
+    // Stretch factor relative to equilibrium bond length
+    const stretchFactor = _eqBondPx > 0 ? currentLen / _eqBondPx : 1;
+    const len = currentLen || 1;
+    dx = (term.x - anchor.x) / len * mol.dipoleMagnitude * stretchFactor;
+    dy = (term.y - anchor.y) / len * mol.dipoleMagnitude * stretchFactor;
+
   } else if (key === 'CO2' || key === 'H2O') {
     if (!left || !right) return;
-    // Bond dipole 1: central → left terminal
+
+    // Per-bond stretch factors
     const lLen = Math.hypot(left.x  - anchor.x, left.y  - anchor.y) || 1;
     const rLen = Math.hypot(right.x - anchor.x, right.y - anchor.y) || 1;
-    // For CO2: O has higher electronegativity, dipole points C→O (central→terminal)
-    // For H2O: O is central, H terminals — dipole points O→H direction each bond,
-    //   but net dipole actually points away from H side toward O lone pairs.
-    //   We flip for H2O: dipole points from terminal toward central.
-    const sign = key === 'H2O' ? -1 : 1;
-    const d1x = sign * (left.x  - anchor.x) / lLen;
-    const d1y = sign * (left.y  - anchor.y) / lLen;
-    const d2x = sign * (right.x - anchor.x) / rLen;
-    const d2y = sign * (right.y - anchor.y) / rLen;
-    dx = d1x + d2x;
-    dy = d1y + d2y;
+    const sfL  = _eqBondPx > 0 ? lLen / _eqBondPx : 1;
+    const sfR  = _eqBondPx > 0 ? rLen / _eqBondPx : 1;
+
+    if (key === 'CO2') {
+      // Each bond dipole points C→O (central→terminal), scaled by stretch.
+      // At equilibrium they cancel exactly; when one bond is longer its dipole
+      // wins, giving a net arrow — mutual exclusion story.
+      const d1x = (left.x  - anchor.x) / lLen * sfL;
+      const d1y = (left.y  - anchor.y) / lLen * sfL;
+      const d2x = (right.x - anchor.x) / rLen * sfR;
+      const d2y = (right.y - anchor.y) / rLen * sfR;
+      dx = d1x + d2x;
+      dy = d1y + d2y;
+    } else {
+      // H₂O: net molecular dipole points from H side toward O lone pairs,
+      // i.e. from terminal midpoint TOWARD oxygen (flip sign).
+      // Each O–H bond dipole points O→H (partial + on H).  Sum gives net
+      // dipole pointing roughly toward O from H midpoint.
+      // We model it as: dipole = −(d1 + d2) where d1,d2 point toward H.
+      const d1x = (left.x  - anchor.x) / lLen * sfL * mol.dipoleMagnitude;
+      const d1y = (left.y  - anchor.y) / lLen * sfL * mol.dipoleMagnitude;
+      const d2x = (right.x - anchor.x) / rLen * sfR * mol.dipoleMagnitude;
+      const d2y = (right.y - anchor.y) / rLen * sfR * mol.dipoleMagnitude;
+      // Sum of O→H vectors; the NET dipole of the molecule points the same way.
+      // Conventionally μ points − to +, i.e. toward the H's.
+      // Use positive sum so the arrow points toward the average H position.
+      dx = d1x + d2x;
+      dy = d1y + d2y;
+    }
   } else {
     return;
   }
 
   const mag = Math.hypot(dx, dy);
-  if (mag < 0.02) return; // near-zero — don't draw a meaningless stub
+  if (mag < 0.02) return;
 
   const nx = dx / mag, ny = dy / mag;
   const arrowLen = mag * DIPOLE_SCALE;
 
-  // Origin at anchor (central atom for triatomics, C for CO)
   const ox = anchor.x, oy = anchor.y;
   const ex = ox + nx * arrowLen, ey = oy + ny * arrowLen;
 
@@ -261,13 +320,11 @@ function drawDipole(anchor, left, right, key) {
   ctx.lineWidth   = 3.5;
   ctx.lineCap     = 'round';
 
-  // Shaft
   ctx.beginPath();
   ctx.moveTo(ox, oy);
   ctx.lineTo(ex, ey);
   ctx.stroke();
 
-  // Arrowhead
   const headLen = 14, headAngle = 0.42;
   const ang = Math.atan2(ey - oy, ex - ox);
   ctx.beginPath();
@@ -277,7 +334,6 @@ function drawDipole(anchor, left, right, key) {
   ctx.closePath();
   ctx.fill();
 
-  // μ label
   ctx.font         = '600 12px \'Work Sans\', sans-serif';
   ctx.fillStyle    = DIPOLE_COLOR;
   ctx.textAlign    = 'center';
@@ -423,7 +479,10 @@ function drawOverlay(headPt, rawAtoms, key) {
     pushHistory(null, null, anchor);
 
   } else if (key === 'N2' || key === 'CO') {
+    // Diatomic: use one hand as the terminal atom.
+    // Prefer the first available hand; fall back to fixed offset.
     const term = rawAtoms[0] || rawAtoms[1] || { x: anchor.x + 90, y: anchor.y };
+    _eqBondPx = 90; // nominal equilibrium bond length in canvas pixels
     const [c1, c2, l1, l2] = key === 'CO'
       ? [COLORS.C, COLORS.O, 'C', 'O']
       : [COLORS.N, COLORS.N, 'N', 'N'];
@@ -434,11 +493,37 @@ function drawOverlay(headPt, rawAtoms, key) {
     pushHistory(null, term, anchor);
 
   } else {
-    // CO2 or H2O — two terminal atoms, apply angle constraint
-    const rawL = rawAtoms[0] || { x: anchor.x - 95, y: anchor.y };
-    const rawR = rawAtoms[1] || { x: anchor.x + 95, y: anchor.y };
+    // CO₂ or H₂O — two terminal atoms
+    // Default fallback positions:
+    //   CO₂: horizontal (natural for linear)
+    //   H₂O: O at top, H's below at ~104.5° — rotate 90° from old horizontal default
+    const eq = mol.equilibriumAngleDeg;
+    let rawL, rawR;
 
-    const { A: left, C: right } = constrainAngle(rawL, anchor, rawR, mol.equilibriumAngleDeg);
+    if (key === 'H2O') {
+      // H₂O default: O (anchor) at top, H's spread downward at equilibrium angle
+      // This means the two H atoms are below the O, forming an upright water molecule.
+      const halfAngle = (eq ?? 104.5) / 2 * Math.PI / 180;
+      const bLen = 80; // bond length in canvas pixels
+      rawL = rawAtoms[0] || {
+        x: anchor.x - Math.sin(halfAngle) * bLen,
+        y: anchor.y + Math.cos(halfAngle) * bLen
+      };
+      rawR = rawAtoms[1] || {
+        x: anchor.x + Math.sin(halfAngle) * bLen,
+        y: anchor.y + Math.cos(halfAngle) * bLen
+      };
+    } else {
+      // CO₂ default: horizontal
+      rawL = rawAtoms[0] || { x: anchor.x - 95, y: anchor.y };
+      rawR = rawAtoms[1] || { x: anchor.x + 95, y: anchor.y };
+    }
+
+    // Update equilibrium bond pixel length from the current default positions
+    _eqBondPx = Math.hypot(rawL.x - anchor.x, rawL.y - anchor.y);
+    if (_eqBondPx < 10) _eqBondPx = 80;
+
+    const { A: left, C: right } = constrainAngle(rawL, anchor, rawR, eq);
 
     const theta = angleDeg(left, anchor, right);
     const geo   = classifyGeometry(theta);
@@ -457,7 +542,6 @@ function drawOverlay(headPt, rawAtoms, key) {
     drawDipole(anchor, left, right, key);
 
     if (theta !== null && angleLabel) {
-      const eq = mol.equilibriumAngleDeg;
       const dev = eq !== null ? ` (${(theta - eq > 0 ? '+' : '')}${(theta - eq).toFixed(1)}°)` : '';
       angleLabel.textContent = `${theta.toFixed(1)}°${dev} — ${geo ?? '?'}`;
       angleLabel.dataset.geo = geo ?? 'ambiguous';
@@ -468,11 +552,15 @@ function drawOverlay(headPt, rawAtoms, key) {
 
   drawMoleculeLabel(anchor.x, anchor.y, mol.formula);
 
-  // Motion classification from history
   const motion = classifyMotion(key);
   if (motion && motionLabel) {
     motionLabel.textContent = motion;
     motionLabel.dataset.motion = motion;
+  }
+  if (motionDot) {
+    motionDot.className = motion && motion !== 'still'
+      ? 'dot ready'
+      : 'dot';
   }
 }
 
@@ -506,10 +594,12 @@ function drawPlaceholder() {
     _b(cx - 70 - pulse * 0.3, anchorY, cx, anchorY); _b(cx, anchorY, cx + 70 + pulse * 0.3, anchorY);
     _a(cx - 70 - pulse * 0.3, anchorY, 17, COLORS.O); _a(cx, anchorY, 20, COLORS.C); _a(cx + 70 + pulse * 0.3, anchorY, 17, COLORS.O);
   } else {
-    const ang = Math.PI / 5, r = 68;
-    const lx = cx - Math.cos(ang) * r - pulse * 0.12;
-    const rx = cx + Math.cos(ang) * r + pulse * 0.12;
-    const ey = anchorY + Math.sin(ang) * r + Math.abs(pulse) * 0.08;
+    // H₂O placeholder — O at top, H's below (upright orientation)
+    const halfAngle = 104.5 / 2 * Math.PI / 180;
+    const bLen = 68 + Math.abs(pulse) * 0.08;
+    const lx = cx - Math.sin(halfAngle) * bLen;
+    const rx = cx + Math.sin(halfAngle) * bLen;
+    const ey = anchorY + Math.cos(halfAngle) * bLen;
     _b(cx, anchorY, lx, ey); _b(cx, anchorY, rx, ey);
     _a(cx, anchorY, 20, COLORS.O); _a(lx, ey, 15, COLORS.H); _a(rx, ey, 15, COLORS.H);
   }
@@ -564,9 +654,21 @@ function detectFrame() {
     setStatus(faceDot, faceStatus, 'Show your face', 'idle');
   }
 
+  // ── Hand assignment ───────────────────────────────────────────────────────
+  // MediaPipe handedness is from the model's perspective (mirrored video).
+  // "Right" from model = user's LEFT hand on screen = left terminal atom (slot 0).
+  // "Left"  from model = user's RIGHT hand on screen = right terminal atom (slot 1).
+  //
+  // This means:
+  //   - H₂O: raise your RIGHT hand to move the RIGHT H atom,
+  //           raise your LEFT  hand to move the LEFT  H atom.
+  //   - The upright H₂O geometry (O top, H's bottom) means raising your
+  //     hands above your head holds the molecule "upside down" (H's up)
+  //     and lowering them gives the natural orientation — intuitive!
   const atomMap = [null, null];
   if (handResult.landmarks?.length > 0) {
     handResult.landmarks.forEach((hand, i) => {
+      // categoryName is from model POV: 'Right' = user's left = screen-left = slot 0
       const side = handResult.handedness[i]?.[0]?.categoryName ?? 'Left';
       const slot = side === 'Right' ? 0 : 1;
       const raw  = palmCenter(hand, w, h);
@@ -638,7 +740,7 @@ async function startCamera() {
 // ─── Events ───────────────────────────────────────────────────────────────────
 select.addEventListener('change', () => {
   renderMoleculeInfo(select.value);
-  history.length = 0; // clear history on molecule switch
+  history.length = 0;
   if (angleLabel) { angleLabel.textContent = '—'; delete angleLabel.dataset.geo; }
   if (motionLabel) { motionLabel.textContent = '—'; delete motionLabel.dataset.motion; }
 });
