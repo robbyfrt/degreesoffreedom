@@ -1,0 +1,821 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Molecular Frequency Explorer</title>
+<link href="https://api.fontshare.com/v2/css?f[]=satoshi@300,400,500,700&display=swap" rel="stylesheet">
+<style>
+/* ── Design tokens ── */
+:root,[data-theme="light"]{
+  --color-bg:#f7f6f2;--color-surface:#f9f8f5;--color-surface-2:#fbfbf9;
+  --color-surface-offset:#f3f0ec;--color-border:#d4d1ca;--color-divider:#dcd9d5;
+  --color-text:#28251d;--color-text-muted:#7a7974;--color-text-faint:#bab9b4;
+  --color-primary:#01696f;--color-primary-hover:#0c4e54;
+  --color-primary-hl:#cedcd8;
+  --shadow-sm:0 1px 2px oklch(0.2 0.01 80/0.06);
+  --shadow-md:0 4px 12px oklch(0.2 0.01 80/0.08);
+  --shadow-lg:0 12px 32px oklch(0.2 0.01 80/0.12);
+  --radius-sm:.375rem;--radius-md:.5rem;--radius-lg:.75rem;--radius-xl:1rem;
+  --tx-xs:clamp(.75rem,.7rem + .25vw,.875rem);
+  --tx-sm:clamp(.875rem,.8rem + .35vw,1rem);
+  --tx-base:clamp(1rem,.95rem + .25vw,1.125rem);
+  --tx-lg:clamp(1.125rem,1rem + .75vw,1.5rem);
+  --tx-xl:clamp(1.5rem,1.2rem + 1.25vw,2.25rem);
+  --sp1:.25rem;--sp2:.5rem;--sp3:.75rem;--sp4:1rem;--sp6:1.5rem;--sp8:2rem;--sp10:2.5rem;
+  --transition:180ms cubic-bezier(.16,1,.3,1);
+}
+[data-theme="dark"]{
+  --color-bg:#171614;--color-surface:#1c1b19;--color-surface-2:#201f1d;
+  --color-surface-offset:#1d1c1a;--color-border:#393836;--color-divider:#262523;
+  --color-text:#cdccca;--color-text-muted:#797876;--color-text-faint:#5a5957;
+  --color-primary:#4f98a3;--color-primary-hover:#227f8b;--color-primary-hl:#313b3b;
+  --shadow-sm:0 1px 2px oklch(0 0 0/.2);--shadow-md:0 4px 12px oklch(0 0 0/.3);
+  --shadow-lg:0 12px 32px oklch(0 0 0/.4);
+}
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+html{-webkit-font-smoothing:antialiased;scroll-behavior:smooth}
+body{min-height:100dvh;font-family:'Satoshi',sans-serif;font-size:var(--tx-base);
+  color:var(--color-text);background:var(--color-bg);display:flex;flex-direction:column}
+button{cursor:pointer;background:none;border:none;color:inherit;font:inherit}
+canvas{display:block}
+/* ── Layout ── */
+header{display:flex;align-items:center;gap:var(--sp4);padding:var(--sp3) var(--sp6);
+  border-bottom:1px solid var(--color-border);background:var(--color-surface);
+  box-shadow:var(--shadow-sm);flex-wrap:wrap}
+.logo{font-size:var(--tx-lg);font-weight:700;color:var(--color-primary);white-space:nowrap}
+.mol-tabs{display:flex;gap:var(--sp2);flex-wrap:wrap}
+.mol-tab{padding:var(--sp1) var(--sp3);border-radius:var(--radius-md);
+  font-size:var(--tx-sm);font-weight:500;border:1px solid var(--color-border);
+  color:var(--color-text-muted);transition:all var(--transition)}
+.mol-tab.active,.mol-tab:hover{background:var(--color-primary);color:#fff;border-color:var(--color-primary)}
+.theme-btn{margin-left:auto;padding:var(--sp2);border-radius:var(--radius-md);
+  color:var(--color-text-muted);transition:all var(--transition)}
+.theme-btn:hover{color:var(--color-text)}
+main{flex:1;display:grid;grid-template-columns:1fr 340px;gap:var(--sp4);
+  padding:var(--sp4);max-width:1280px;margin:0 auto;width:100%}
+/* ── EM Spectrum bar ── */
+.em-bar-wrap{grid-column:1/-1;background:var(--color-surface);
+  border:1px solid var(--color-border);border-radius:var(--radius-lg);
+  padding:var(--sp4);box-shadow:var(--shadow-sm)}
+.em-bar-title{font-size:var(--tx-xs);color:var(--color-text-muted);
+  text-transform:uppercase;letter-spacing:.06em;margin-bottom:var(--sp3)}
+.em-canvas-wrap{position:relative}
+/* ── Panels ── */
+.panel{background:var(--color-surface);border:1px solid var(--color-border);
+  border-radius:var(--radius-lg);padding:var(--sp4);box-shadow:var(--shadow-sm);
+  display:flex;flex-direction:column;gap:var(--sp4)}
+.panel-title{font-size:var(--tx-sm);font-weight:600;
+  text-transform:uppercase;letter-spacing:.05em;color:var(--color-text-muted)}
+/* ── Slider area ── */
+.freq-display{display:flex;flex-direction:column;gap:var(--sp1)}
+.freq-value{font-size:var(--tx-xl);font-weight:700;color:var(--color-primary);
+  font-variant-numeric:tabular-nums;line-height:1}
+.freq-lambda{font-size:var(--tx-lg);font-weight:500;color:var(--color-text);
+  font-variant-numeric:tabular-nums}
+.freq-meta{font-size:var(--tx-xs);color:var(--color-text-muted)}
+.region-badge{display:inline-block;padding:2px var(--sp2);border-radius:var(--radius-full);
+  font-size:.6rem;font-weight:700;text-transform:uppercase;letter-spacing:.06em;
+  background:var(--color-primary-hl);color:var(--color-primary)}
+input[type=range]{width:100%;accent-color:var(--color-primary);cursor:pointer;height:6px}
+/* ── Resonance cards ── */
+.res-list{display:flex;flex-direction:column;gap:var(--sp2)}
+.res-card{border:1px solid var(--color-border);border-radius:var(--radius-md);
+  padding:var(--sp3);transition:all var(--transition);cursor:default;
+  background:var(--color-surface-2)}
+.res-card.near{border-color:var(--color-primary);background:var(--color-primary-hl);
+  box-shadow:var(--shadow-md)}
+.res-card-header{display:flex;align-items:center;gap:var(--sp2);margin-bottom:var(--sp1)}
+.res-freq-tag{font-size:.65rem;font-weight:700;font-variant-numeric:tabular-nums;
+  background:var(--color-surface-offset);border:1px solid var(--color-border);
+  border-radius:var(--radius-sm);padding:2px var(--sp2);color:var(--color-text)}
+.res-card.near .res-freq-tag{background:var(--color-primary);color:#fff;border-color:transparent}
+.res-label{font-size:var(--tx-sm);font-weight:600}
+.res-badges{display:flex;gap:var(--sp1);flex-wrap:wrap;margin-bottom:var(--sp1)}
+.badge{padding:1px var(--sp2);border-radius:var(--radius-full);
+  font-size:.58rem;font-weight:700;text-transform:uppercase;letter-spacing:.05em}
+.badge-rot{background:rgba(228,175,52,.18);color:#e8af34}
+.badge-vib{background:rgba(85,145,199,.18);color:#5591c7}
+.badge-ir{background:rgba(109,170,69,.18);color:#6daa45}
+.badge-inactive{background:rgba(140,140,140,.15);color:#999}
+.badge-ping{background:rgba(221,105,116,.2);color:#dd6974;animation:ping .9s ease-in-out infinite}
+@keyframes ping{0%,100%{opacity:1}50%{opacity:.4}}
+.res-desc{font-size:var(--tx-xs);color:var(--color-text-muted);line-height:1.55}
+/* ── Wave + molecule canvas ── */
+.wave-panel{min-height:200px;position:relative}
+.wave-canvas{width:100%;border-radius:var(--radius-md)}
+/* ── Absorption chart ── */
+.abs-canvas{width:100%;border-radius:var(--radius-sm)}
+.abs-note{font-size:.58rem;color:var(--color-text-faint);font-style:italic;margin-top:var(--sp1)}
+/* ── Atmospheric collapse ── */
+.atm-toggle{display:flex;align-items:center;gap:var(--sp2);cursor:pointer;
+  padding:var(--sp2) 0;font-size:var(--tx-sm);font-weight:600;
+  color:var(--color-text-muted);border-top:1px solid var(--color-divider);
+  transition:color var(--transition)}
+.atm-toggle:hover{color:var(--color-text)}
+.atm-chevron{transition:transform var(--transition)}
+.atm-chevron.open{transform:rotate(180deg)}
+.atm-species-list{display:flex;flex-direction:column;gap:var(--sp2)}
+.sp-row{display:grid;grid-template-columns:36px 1fr auto;align-items:center;gap:var(--sp2)}
+.sp-name{font-size:var(--tx-xs);font-weight:700}
+.sp-bar-bg{background:var(--color-surface-offset);border-radius:var(--radius-full);height:6px;overflow:hidden}
+.sp-bar{height:100%;border-radius:var(--radius-full);transition:width .6s ease}
+.sp-lbl{font-size:.6rem;color:var(--color-text-muted);white-space:nowrap}
+/* responsive */
+@media(max-width:768px){
+  main{grid-template-columns:1fr}
+  .freq-value{font-size:var(--tx-lg)}
+}
+</style>
+</head>
+<body>
+<header>
+  <div class="logo">Degrees of Freedom</div>
+  <div class="mol-tabs" id="molTabs"></div>
+  <button class="theme-btn" data-theme-toggle aria-label="Toggle theme">
+    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+      <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/>
+    </svg>
+  </button>
+</header>
+
+<main>
+  <!-- EM bar -->
+  <div class="em-bar-wrap">
+    <div class="em-bar-title">Electromagnetic spectrum — drag slider or use ← → keys</div>
+    <div class="em-canvas-wrap">
+      <canvas id="emBar" height="54"></canvas>
+    </div>
+  </div>
+
+  <!-- Left: wave + molecule + absorption -->
+  <div style="display:flex;flex-direction:column;gap:var(--sp4)">
+    <!-- freq readout + slider -->
+    <div class="panel">
+      <div class="freq-display">
+        <div class="freq-lambda" id="lambdaVal">—</div>
+        <div class="freq-value" id="freqVal">—</div>
+        <div class="freq-meta"><span class="region-badge" id="regionBadge">—</span> &nbsp;<span id="freqMeta"></span></div>
+      </div>
+      <input type="range" id="freqSlider" min="0" max="1000" value="200">
+    </div>
+
+    <!-- wave + molecule canvas -->
+    <div class="panel wave-panel">
+      <div class="panel-title" id="waveTitle">Electromagnetic wave — molecule interaction</div>
+      <canvas id="waveCanvas" class="wave-canvas" height="180"></canvas>
+      <div id="modeDesc" class="res-desc"></div>
+    </div>
+
+    <!-- absorption chart -->
+    <div class="panel">
+      <div class="panel-title">Absorption spectrum vs wavelength (schematic*)</div>
+      <canvas id="absChart" class="abs-canvas" height="120"></canvas>
+      <div class="abs-note">* Peak positions & widths are schematic for education. Real gas-phase bands contain many rovibrational lines; see HITRAN for measured cross-sections.</div>
+
+      <!-- atmospheric collapse (CO2 only) -->
+      <div id="atmWrap" style="display:none">
+        <div class="atm-toggle" id="atmToggle">
+          <svg class="atm-chevron" id="atmChevron" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="6 9 12 15 18 9"/></svg>
+          Atmospheric context
+        </div>
+        <div id="atmSection" style="display:none;flex-direction:column;gap:var(--sp2)">
+          <p style="font-size:var(--tx-xs);color:var(--color-text-muted);line-height:1.5">Default view: Earth's thermal emission vs a simplified atmospheric window. Expand for a small composition list to contrast abundance with IR relevance.</p>
+          <canvas id="atmChart" height="120" style="width:100%;border-radius:var(--radius-sm)"></canvas>
+          <p style="font-size:var(--tx-xs);color:var(--color-text-muted);line-height:1.5;margin-bottom:var(--sp2)">Composition reminder: the lower bars are <em>not absorption strengths</em>; they summarize approximate atmospheric abundance so you can contrast abundance with radiative importance. N₂ and O₂ dominate the air but are mostly IR-transparent, while trace gases like CO₂, CH₄ and O₃ matter disproportionately.</p>
+          <div class="atm-species-list" id="spList"></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Right: resonance cards -->
+  <div class="panel">
+    <div class="panel-title" id="molTitle">Resonances</div>
+    <div class="res-list" id="resList"></div>
+  </div>
+</main>
+
+<script>
+// ── Theme toggle ──
+(function(){
+  const t=document.querySelector('[data-theme-toggle]'),r=document.documentElement;
+  let d=matchMedia('(prefers-color-scheme:dark)').matches?'dark':'light';
+  r.setAttribute('data-theme',d);
+  t&&t.addEventListener('click',()=>{
+    d=d==='dark'?'light':'dark';r.setAttribute('data-theme',d);
+  });
+})();
+
+// ── Constants ──
+const LOG_MIN=6, LOG_MAX=19; // log10(Hz) range: ~1MHz to ~100PHz
+const SPEED_LIGHT=3e8;
+
+// ── Molecule data ──
+const MOLECULES={
+  H2O:{
+    label:"H₂O",hasDipole:true,
+    modes:[
+      {id:"rot1",type:"rot",label:"Pure rotation (lowest)",freqHz:1.83e11,freq:"183",unit:"GHz",irActive:true,
+       desc:"The permanent dipole (shown as μ arrow) follows the incoming field — the molecule absorbs a rotational photon and changes rotational state (J→J+1). In bulk matter and dense gases, that ordered excitation is redistributed by collisions into thermal motion, which is why absorbed radiation becomes heat."},
+      {id:"rot2",type:"rot",label:"Pure rotation (2nd)",freqHz:3.66e11,freq:"366",unit:"GHz",irActive:true,
+       desc:"Second pure rotational transition. Microwave and sub-mm radiation drives these; this is why water vapour strongly attenuates microwave links."},
+      {id:"bend",type:"vib",label:"Bending ν₂",freqHz:4.78e13,freq:"1595",unit:"cm⁻¹",irActive:true,
+       desc:"The H–O–H angle oscillates. The dipole direction changes → IR active near 6.3 μm. The dipole moment changes as the molecule moves — the oscillating E-field of the wave drives this motion in phase. Energy is transferred and the photon is absorbed; later, collisions and relaxation redistribute that energy into heat."},
+      {id:"sym",type:"vib",label:"Sym. stretch ν₁",freqHz:1.13e14,freq:"3657",unit:"cm⁻¹",irActive:true,
+       desc:"Both O–H bonds stretch symmetrically. Although symmetric, the net dipole still changes magnitude → weakly IR active near 2.7 μm."},
+      {id:"asym",type:"vib",label:"Asym. stretch ν₃",freqHz:1.17e14,freq:"3756",unit:"cm⁻¹",irActive:true,
+       desc:"Both O–H bonds change length out of phase: one lengthens while the other shortens. Strong dipole oscillation → IR active near 2.7 μm."},
+    ]
+  },
+  CO2:{
+    label:"CO₂",hasDipole:false,
+    modes:[
+      {id:"bend",type:"vib",label:"Bending ν₂ (15 μm)",freqHz:2.0e13,freq:"667",unit:"cm⁻¹",irActive:true,
+       desc:"The linear molecule bends; symmetry breaks → a dipole is created perpendicular to the bond axis → strongly IR active at ~15 μm. This is the primary greenhouse gas band."},
+      {id:"sym",type:"vib",label:"Sym. stretch ν₁",freqHz:4.0e13,freq:"1388",unit:"cm⁻¹",irActive:false,
+       desc:"Both C=O bonds stretch together. Symmetry preserved → no dipole change → IR inactive (only Raman active)."},
+      {id:"asym",type:"vib",label:"Asym. stretch ν₃ (4.3 μm)",freqHz:7.05e13,freq:"2349",unit:"cm⁻¹",irActive:true,
+       desc:"One C=O bond lengthens while the other shortens → the charge distribution becomes uneven → a net dipole forms along the bond axis → strongly IR active at ~4.3 μm."},
+    ]
+  },
+  N2:{
+    label:"N₂",hasDipole:false,
+    modes:[
+      {id:"sym",type:"vib",label:"Sym. stretch",freqHz:7.07e13,freq:"2331",unit:"cm⁻¹",irActive:false,
+       desc:"Homonuclear diatomic: the bond stretches but symmetry is perfectly preserved — no dipole exists or changes. IR inactive. N₂ can physically rotate, of course, but because it has no permanent dipole it has no pure rotational microwave spectrum and no IR-active vibration. This is why 78% of the atmosphere is largely transparent to Earth's thermal IR."},
+    ]
+  },
+  HCl:{
+    label:"HCl",hasDipole:true,
+    modes:[
+      {id:"rot1",type:"rot",label:"Pure rotation J=0→1",freqHz:6.26e11,freq:"20.9",unit:"cm⁻¹",irActive:true,
+       desc:"The permanent dipole (shown as μ arrow) follows the incoming field — the molecule absorbs a rotational photon and changes rotational state (J→J+1). In bulk matter and dense gases, that ordered excitation is redistributed by collisions into thermal motion, which is why absorbed radiation becomes heat."},
+      {id:"vib",type:"vib",label:"Fund. vibration",freqHz:8.65e13,freq:"2886",unit:"cm⁻¹",irActive:true,
+       desc:"The H–Cl bond stretches. Large dipole change → strongly IR active near 3.5 μm."},
+    ]
+  }
+};
+
+const ATM_SPECIES=[
+  {name:"N₂",  color:"#6daa45",abundance:"78.08%",climate:"largely IR-transparent",width:78.08,bands:"homonuclear, no dipole"},
+  {name:"O₂",  color:"#8aa0ff",abundance:"20.95%",climate:"mostly IR-transparent",width:20.95,bands:"homonuclear, no dipole"},
+  {name:"Ar",  color:"#999999",abundance:"0.93%",climate:"noble gas, IR-inactive",width:0.9,bands:"monatomic"},
+  {name:"H₂O", color:"#5591c7",abundance:"0–4%",climate:"strong, complex absorber",width:4.0,bands:"rot + broad IR bands"},
+  {name:"CO₂", color:"#dd6974",abundance:"~420 ppm",climate:"strong at 15 μm",width:0.042,bands:"ν₂, ν₃ IR-active"},
+  {name:"CH₄", color:"#fdab43",abundance:"~1.9 ppm",climate:"strong per molecule",width:0.00019,bands:"IR-active"},
+  {name:"O₃",  color:"#a86fdf",abundance:"trace",climate:"UV shield + 9.6 μm",width:0.000004,bands:"UV + IR-active"}
+];
+
+const EM_REGIONS=[
+  {name:"Radio",     lo:1e6,  hi:3e8,  color:"#2a2a3a"},
+  {name:"Microwave", lo:3e8,  hi:3e11, color:"#1a2a2a"},
+  {name:"Far IR",    lo:3e11, hi:6e12, color:"#1a2010"},
+  {name:"Mid IR",    lo:6e12, hi:1e14, color:"#2a1800"},
+  {name:"Near IR",   lo:1e14, hi:4.3e14,color:"#1a1010"},
+  {name:"Visible",   lo:4.3e14,hi:7.5e14,color:null},// colored specially
+  {name:"UV",        lo:7.5e14,hi:3e17, color:"#1a0820"},
+  {name:"X-ray",     lo:3e17, hi:3e19, color:"#100a20"},
+  {name:"γ-ray",     lo:3e19, hi:1e25, color:"#0a0510"},
+];
+
+// ── State ──
+let currentMol="H2O";
+let sliderVal=200; // 0-1000
+let phase=0;
+let animFrame=null;
+
+function sliderToHz(v){ return Math.pow(10, LOG_MIN + (v/1000)*(LOG_MAX-LOG_MIN)); }
+function hz2lambda(hz){
+  const lm=SPEED_LIGHT/hz;
+  if(lm>=1)    return lm.toFixed(1)+" m";
+  if(lm>=1e-2) return (lm*100).toFixed(2)+" cm";
+  if(lm>=1e-3) return (lm*1e3).toFixed(2)+" mm";
+  if(lm>=1e-6) return (lm*1e6).toFixed(2)+" μm";
+  if(lm>=1e-9) return (lm*1e9).toFixed(1)+" nm";
+  return (lm*1e10).toFixed(1)+" Å";
+}
+function hz2lambdaShort(hz){
+  const lm=SPEED_LIGHT/hz;
+  if(lm>=1)    return lm.toFixed(2)+" m";
+  if(lm>=1e-2) return (lm*100).toFixed(1)+" cm";
+  if(lm>=1e-3) return (lm*1e3).toFixed(1)+" mm";
+  if(lm>=1e-6) return (lm*1e6).toFixed(1)+" μm";
+  if(lm>=1e-9) return (lm*1e9).toFixed(0)+" nm";
+  return (lm*1e10).toFixed(0)+" Å";
+}
+function hz2display(hz){
+  if(hz<1e9)  return (hz/1e6).toFixed(2)+" MHz";
+  if(hz<1e12) return (hz/1e9).toFixed(2)+" GHz";
+  if(hz<1e15) return (hz/1e12).toFixed(2)+" THz";
+  if(hz<1e18) return (hz/1e15).toFixed(2)+" PHz";
+  return hz.toExponential(2)+" Hz";
+}
+function getRegion(hz){
+  for(const r of EM_REGIONS) if(hz>=r.lo&&hz<r.hi) return r.name;
+  return "γ-ray";
+}
+function logPos(hz){ return (Math.log10(hz)-LOG_MIN)/(LOG_MAX-LOG_MIN); }
+function isNearMode(hz,mode){
+  const ratio=hz/mode.freqHz;
+  return ratio>0.5&&ratio<2;
+}
+function getActiveMode(hz){
+  const mol=MOLECULES[currentMol];
+  let best=null,bestRatio=99;
+  for(const m of mol.modes){
+    const d=Math.abs(Math.log10(hz/m.freqHz));
+    if(d<0.3&&d<bestRatio){bestRatio=d;best=m;}
+  }
+  return best;
+}
+
+// ── Molecule tabs ──
+function buildTabs(){
+  const c=document.getElementById("molTabs");
+  c.innerHTML="";
+  for(const [k,v] of Object.entries(MOLECULES)){
+    const b=document.createElement("button");
+    b.className="mol-tab"+(k===currentMol?" active":"");
+    b.textContent=v.label;
+    b.onclick=()=>{currentMol=k;buildTabs();buildCards();updateAtmSection();};
+    c.appendChild(b);
+  }
+}
+
+// ── EM bar ──
+function drawEmBar(){
+  const canvas=document.getElementById("emBar");
+  const W=canvas.parentElement.clientWidth;
+  canvas.width=W;
+  const ctx=canvas.getContext("2d");
+  ctx.clearRect(0,0,W,54);
+
+  // background regions
+  for(const r of EM_REGIONS){
+    const x0=logPos(r.lo)*W, x1=logPos(Math.min(r.hi,1e25))*W;
+    if(r.color){
+      ctx.fillStyle=r.color;
+      ctx.fillRect(x0,0,x1-x0,32);
+    } else {
+      // visible — rainbow
+      const grad=ctx.createLinearGradient(x0,0,x1,0);
+      grad.addColorStop(0,"#6000ff");grad.addColorStop(.15,"#0000ff");
+      grad.addColorStop(.3,"#00aaff");grad.addColorStop(.45,"#00ff00");
+      grad.addColorStop(.6,"#ffff00");grad.addColorStop(.8,"#ff8800");
+      grad.addColorStop(1,"#ff0000");
+      ctx.fillStyle=grad;ctx.fillRect(x0,0,x1-x0,32);
+    }
+    // label
+    const cx=(x0+x1)/2;
+    ctx.fillStyle="rgba(255,255,255,0.5)";
+    ctx.font="bold 9px Satoshi,sans-serif";ctx.textAlign="center";ctx.textBaseline="middle";
+    if(x1-x0>30) ctx.fillText(r.name,cx,16);
+  }
+
+  // resonance ticks
+  const mol=MOLECULES[currentMol];
+  for(const m of mol.modes){
+    const x=logPos(m.freqHz)*W;
+    ctx.beginPath();ctx.moveTo(x,0);ctx.lineTo(x,32);
+    ctx.strokeStyle=m.type==="rot"?"rgba(232,175,52,0.7)":"rgba(85,145,199,0.7)";
+    ctx.lineWidth=2;ctx.stroke();
+    ctx.fillStyle=m.type==="rot"?"rgba(232,175,52,0.85)":"rgba(85,145,199,0.85)";
+    ctx.font="bold 8px Satoshi,sans-serif";ctx.textAlign="center";
+    ctx.fillText(hz2lambdaShort(m.freqHz),x,43);
+  }
+
+  // current position cursor
+  const currentHz=sliderToHz(sliderVal);
+  const cx=logPos(currentHz)*W;
+  ctx.beginPath();ctx.moveTo(cx,0);ctx.lineTo(cx,32);
+  ctx.strokeStyle="#4f98a3";ctx.lineWidth=2.5;ctx.stroke();
+  ctx.beginPath();ctx.arc(cx,16,5,0,Math.PI*2);
+  ctx.fillStyle="#4f98a3";ctx.fill();
+}
+
+// ── Resonance cards ──
+function buildCards(){
+  document.getElementById("molTitle").textContent=MOLECULES[currentMol].label+" resonances";
+  const hz=sliderToHz(sliderVal);
+  const list=document.getElementById("resList");
+  list.innerHTML=MOLECULES[currentMol].modes.map(m=>{
+    const near=isNearMode(hz,m);
+    const typeB=`<span class="badge badge-${m.type}">${m.type==="rot"?"Rotation":"Vibration"}</span>`;
+    const irB=m.irActive?`<span class="badge badge-ir">IR active</span>`:`<span class="badge badge-inactive">IR inactive</span>`;
+    const ping=near?`<span class="badge badge-ping">⚡ RESONANCE</span>`:"";
+    return `<div class="res-card${near?" near":""}">
+      <div class="res-card-header">
+        <span class="res-freq-tag">${hz2lambdaShort(m.freqHz)}</span>
+        <span class="res-label">${m.label}</span>
+      </div>
+      <div class="res-badges">${typeB}${irB}${ping}</div>
+      <div style="font-size:.62rem;color:var(--color-text-faint);margin-bottom:var(--sp1)">≈ ${m.freq} ${m.unit}</div>
+      <div class="res-desc">${m.desc}</div>
+    </div>`;
+  }).join("");
+}
+
+// ── Absorption chart ──
+function drawAbsChart(){
+  const canvas=document.getElementById("absChart");
+  const W=canvas.parentElement.clientWidth;
+  canvas.width=W;
+  const ctx=canvas.getContext("2d");
+  const H=120;
+  const isDark=document.documentElement.getAttribute("data-theme")==="dark";
+  ctx.clearRect(0,0,W,H);
+
+  // axes
+  ctx.strokeStyle=isDark?"rgba(255,255,255,0.08)":"rgba(0,0,0,0.08)";
+  ctx.lineWidth=1;
+  for(let i=0;i<=4;i++){const y=H-10-(i/4)*(H-20);ctx.beginPath();ctx.moveTo(0,y);ctx.lineTo(W,y);ctx.stroke();}
+
+  const mol=MOLECULES[currentMol];
+  for(const m of mol.modes){
+    const cx=logPos(m.freqHz)*W;
+    const sigma=W*0.012;
+    const col=m.irActive?(m.type==="rot"?"rgba(232,175,52":"rgba(85,145,199"):("rgba(140,140,140");
+    const alpha=m.irActive?0.85:0.35;
+    ctx.beginPath();
+    for(let x=Math.max(0,cx-sigma*4);x<Math.min(W,cx+sigma*4);x++){
+      const y=Math.exp(-0.5*Math.pow((x-cx)/sigma,2));
+      const py=H-10-y*(H-22);
+      x===Math.max(0,cx-sigma*4)?ctx.moveTo(x,py):ctx.lineTo(x,py);
+    }
+    ctx.strokeStyle=`${col},${alpha})`;
+    ctx.lineWidth=2.5;ctx.stroke();
+
+    // fill
+    ctx.beginPath();ctx.moveTo(Math.max(0,cx-sigma*4),H-10);
+    for(let x=Math.max(0,cx-sigma*4);x<Math.min(W,cx+sigma*4);x++){
+      const y=Math.exp(-0.5*Math.pow((x-cx)/sigma,2));
+      ctx.lineTo(x,H-10-y*(H-22));
+    }
+    ctx.lineTo(Math.min(W,cx+sigma*4),H-10);ctx.closePath();
+    ctx.fillStyle=`${col},${alpha*0.25})`;ctx.fill();
+  }
+
+  // current position marker
+  const markerX=logPos(sliderToHz(sliderVal))*W;
+  ctx.beginPath();ctx.moveTo(markerX,0);ctx.lineTo(markerX,H);
+  ctx.strokeStyle="rgba(79,152,163,0.7)";ctx.lineWidth=1.5;ctx.setLineDash([4,4]);ctx.stroke();ctx.setLineDash([]);
+
+  // x-axis labels (wavelength)
+  const refLambdas=[1,0.01,1e-3,10e-6,1e-6,100e-9,10e-9,1e-9];
+  const refLabels=["1 m","1 cm","1 mm","10 μm","1 μm","100 nm","10 nm","1 nm"];
+  ctx.fillStyle=isDark?"rgba(255,255,255,0.3)":"rgba(0,0,0,0.3)";
+  ctx.font="8px Satoshi,sans-serif";ctx.textAlign="center";ctx.textBaseline="top";
+  for(let i=0;i<refLambdas.length;i++){
+    const hz=SPEED_LIGHT/refLambdas[i];
+    if(hz<Math.pow(10,LOG_MIN)||hz>Math.pow(10,LOG_MAX)) continue;
+    const x=logPos(hz)*W;
+    ctx.fillText(refLabels[i],x,H-8);
+  }
+}
+
+// ── Atmospheric chart ──
+function drawAtmChart(){
+  const canvas=document.getElementById("atmChart");
+  const W=canvas.parentElement.clientWidth;
+  canvas.width=W;
+  const ctx=canvas.getContext("2d");
+  const H=120;
+  const isDark=document.documentElement.getAttribute("data-theme")==="dark";
+  ctx.clearRect(0,0,W,H);
+
+  // background gradient representing atmospheric transmittance (schematic)
+  const windows=[
+    {lo:8e-6,hi:13e-6,alpha:0.9},  // 8-13um window
+    {lo:3.5e-6,hi:4e-6,alpha:0.7},
+    {lo:2e-6,hi:2.5e-6,alpha:0.6},
+    {lo:1.5e-6,hi:1.8e-6,alpha:0.5},
+  ];
+  ctx.fillStyle=isDark?"rgba(30,30,40,1)":"rgba(220,230,240,1)";
+  ctx.fillRect(0,0,W,H*0.6);
+
+  // transparent windows in green
+  for(const w of windows){
+    const hzLo=SPEED_LIGHT/w.hi, hzHi=SPEED_LIGHT/w.lo;
+    if(hzHi<Math.pow(10,LOG_MIN)||hzLo>Math.pow(10,LOG_MAX)) continue;
+    const x0=logPos(hzLo)*W, x1=logPos(hzHi)*W;
+    ctx.fillStyle=`rgba(80,180,100,${w.alpha*0.35})`;
+    ctx.fillRect(x0,0,x1-x0,H*0.6);
+  }
+
+  // CO2 band at 15um, H2O broad, O3 at 9.6um
+  const atmBands=[
+    {center:SPEED_LIGHT/15e-6, width:W*0.015, color:"rgba(221,105,116", label:"CO₂ 15μm"},
+    {center:SPEED_LIGHT/4.3e-6,width:W*0.012, color:"rgba(221,105,116", label:"CO₂ 4.3μm"},
+    {center:SPEED_LIGHT/9.6e-6,width:W*0.012, color:"rgba(168,111,223", label:"O₃"},
+    {center:SPEED_LIGHT/6.3e-6,width:W*0.018, color:"rgba(85,145,199",  label:"H₂O"},
+    {center:SPEED_LIGHT/2.7e-6,width:W*0.015, color:"rgba(85,145,199",  label:"H₂O"},
+  ];
+  for(const b of atmBands){
+    const cx=logPos(b.center)*W;
+    ctx.beginPath();
+    for(let x=Math.max(0,cx-b.width*3);x<Math.min(W,cx+b.width*3);x++){
+      const y=Math.exp(-0.5*Math.pow((x-cx)/b.width,2))*H*0.58;
+      const py=H*0.6-y;
+      x===Math.max(0,cx-b.width*3)?ctx.moveTo(x,py):ctx.lineTo(x,py);
+    }
+    ctx.strokeStyle=`${b.color},0.8)`;ctx.lineWidth=2;ctx.stroke();
+    ctx.beginPath();ctx.moveTo(Math.max(0,cx-b.width*3),H*0.6);
+    for(let x=Math.max(0,cx-b.width*3);x<Math.min(W,cx+b.width*3);x++){
+      const y=Math.exp(-0.5*Math.pow((x-cx)/b.width,2))*H*0.58;
+      ctx.lineTo(x,H*0.6-y);
+    }
+    ctx.lineTo(Math.min(W,cx+b.width*3),H*0.6);ctx.closePath();
+    ctx.fillStyle=`${b.color},0.2)`;ctx.fill();
+  }
+
+  // Earth Planck curve ~288K (schematic, normalized)
+  ctx.beginPath();
+  let firstPlanck=true;
+  for(let x=0;x<W;x++){
+    const hz=Math.pow(10,LOG_MIN+x/W*(LOG_MAX-LOG_MIN));
+    const lm=SPEED_LIGHT/hz;
+    const hv_kT=(6.626e-34*hz)/(1.38e-23*288);
+    if(hv_kT>700) continue;
+    const B=Math.pow(hz,3)/(Math.exp(hv_kT)-1+1e-300);
+    const logB=Math.log10(B+1e-300);
+    if(logB<100||isNaN(logB)) {firstPlanck=true;continue;}
+    const normB=(logB-100)/40;
+    const py=H-5-normB*H*0.35;
+    if(firstPlanck){ctx.moveTo(x,py);firstPlanck=false;}else ctx.lineTo(x,py);
+  }
+  ctx.strokeStyle="rgba(255,100,80,0.7)";ctx.lineWidth=1.5;ctx.setLineDash([5,3]);ctx.stroke();ctx.setLineDash([]);
+
+  ctx.fillStyle=isDark?"rgba(255,255,255,0.4)":"rgba(0,0,0,0.4)";
+  ctx.font="7px Satoshi,sans-serif";ctx.textAlign="left";ctx.textBaseline="top";
+  ctx.fillText("— Earth 288K",8,H-14);
+
+  ctx.fillStyle=isDark?"rgba(255,255,255,0.25)":"rgba(0,0,0,0.25)";
+  ctx.textAlign="left";ctx.textBaseline="top";
+  ctx.fillText("Atmospheric transmittance (schematic)",8,4);
+}
+
+// ── Species list ──
+function renderSpeciesList(){
+  const list=document.getElementById("spList");
+  list.innerHTML=ATM_SPECIES.map(s=>{
+    const isTransparent=/transparent|inactive|homonuclear|monatomic/.test(s.climate+" "+s.bands);
+    const barColor=isTransparent?"rgba(140,140,140,0.55)":s.color;
+    const textColor=isTransparent?"var(--color-text-muted)":s.color;
+    const width=s.width>=1?s.width:(s.width>0?Math.max(1.2,s.width*20):0);
+    return `<div class="sp-row">
+      <span class="sp-name" style="color:${textColor}">${s.name}</span>
+      <div class="sp-bar-bg"><div class="sp-bar" style="width:${Math.min(width,100)}%;background:${barColor}"></div></div>
+      <span class="sp-lbl">${s.abundance} • ${s.climate}</span>
+    </div>`;
+  }).join("");
+}
+
+// ── Atmospheric toggle ──
+function updateAtmSection(){
+  const wrap=document.getElementById("atmWrap");
+  wrap.style.display=currentMol==="CO2"?"block":"none";
+}
+document.getElementById("atmToggle").addEventListener("click",()=>{
+  const sec=document.getElementById("atmSection");
+  const chev=document.getElementById("atmChevron");
+  const open=sec.style.display==="none";
+  sec.style.display=open?"flex":"none";
+  chev.classList.toggle("open",open);
+  if(open){drawAtmChart();renderSpeciesList();}
+});
+
+// ── Drawing helpers ──
+function drawDipoleHorizontal(ctx,len,flip=false,centered=false){
+  const col="#e8af34";
+  const dir=flip?-1:1;
+  const x1=centered?-len*0.5:0;
+  const x2=centered?len*0.5*dir:len*dir;
+  ctx.beginPath();
+  ctx.moveTo(x1,0);ctx.lineTo(x2,0);
+  ctx.strokeStyle=col;ctx.lineWidth=2.5;ctx.stroke();
+  ctx.beginPath();
+  ctx.moveTo(x2,0);
+  ctx.lineTo(x2-10*dir,-6);
+  ctx.lineTo(x2-10*dir,6);
+  ctx.closePath();ctx.fillStyle=col;ctx.fill();
+  ctx.fillStyle=col;ctx.font="bold 10px Satoshi,sans-serif";ctx.textAlign="center";ctx.textBaseline="bottom";
+  ctx.fillText("μ",(x1+x2)/2,-4);
+}
+function drawDipole(cx,cy,ctx,len,flipped=false){
+  const col="#e8af34";
+  const dir=flipped?1:-1;
+  ctx.beginPath();
+  ctx.moveTo(cx,cy);ctx.lineTo(cx,cy-len*dir);
+  ctx.strokeStyle=col;ctx.lineWidth=2.5;ctx.stroke();
+  ctx.beginPath();
+  const tip=cy-len*dir;
+  ctx.moveTo(cx,tip);ctx.lineTo(cx-6,tip+10*dir);ctx.lineTo(cx+6,tip+10*dir);
+  ctx.closePath();ctx.fillStyle=col;ctx.fill();
+  ctx.fillStyle=col;ctx.font="bold 10px Satoshi,sans-serif";
+  ctx.textAlign="left";ctx.textBaseline="middle";ctx.fillText("μ",cx+8,tip);
+}
+
+// ── Wave + molecule canvas ──
+function drawWave(){
+  const canvas=document.getElementById("waveCanvas");
+  const W=canvas.parentElement.clientWidth;
+  canvas.width=W;
+  const H=180;
+  const ctx=canvas.getContext("2d");
+  const isDark=document.documentElement.getAttribute("data-theme")==="dark";
+  ctx.clearRect(0,0,W,H);
+
+  const currentHz=sliderToHz(sliderVal);
+  const activeMode=getActiveMode(currentHz);
+  const isNear=!!activeMode;
+
+  const tFreq=(Math.log10(currentHz)-LOG_MIN)/(LOG_MAX-LOG_MIN);
+  const waveFreqViz=0.008+tFreq*0.09;
+  const waveAmp=isNear?22:14;
+  const waveColor=isNear?"rgba(79,152,163,0.85)":"rgba(79,152,163,0.38)";
+  const oY=H/2;
+  const molX=W*0.42;
+
+  // incoming wave (left of molecule)
+  ctx.beginPath();
+  for(let x=0;x<molX;x++){
+    const y=oY+waveAmp*Math.sin(2*Math.PI*(x*waveFreqViz-phase));
+    x===0?ctx.moveTo(x,y):ctx.lineTo(x,y);
+  }
+  ctx.strokeStyle=waveColor;ctx.lineWidth=isNear?2.5:1.5;ctx.stroke();
+
+  // arrowhead on incoming wave
+  if(isNear){
+    const ax=molX-16,ay=oY+waveAmp*Math.sin(2*Math.PI*(ax*waveFreqViz-phase));
+    ctx.beginPath();ctx.moveTo(ax,ay);ctx.lineTo(ax-10,ay-6);ctx.lineTo(ax-10,ay+6);
+    ctx.closePath();ctx.fillStyle=waveColor;ctx.fill();
+  }
+
+  // attenuated outgoing wave (right of molecule)
+  const attenFactor=isNear&&activeMode?.irActive?0.35:0.95;
+  ctx.beginPath();
+  for(let x=molX;x<W;x++){
+    const y=oY+waveAmp*attenFactor*Math.sin(2*Math.PI*(x*waveFreqViz-phase));
+    x===molX?ctx.moveTo(x,y):ctx.lineTo(x,y);
+  }
+  ctx.strokeStyle=isNear&&activeMode?.irActive?`rgba(79,152,163,0.22)`:`rgba(79,152,163,0.28)`;
+  ctx.lineWidth=1.2;ctx.stroke();
+
+  // "absorbed" label
+  if(isNear&&activeMode?.irActive){
+    ctx.fillStyle="rgba(221,105,116,0.7)";
+    ctx.font="10px Satoshi,sans-serif";ctx.textAlign="left";
+    ctx.fillText("↓ absorbed",molX+6,oY-24);
+  }
+
+  // E-field label
+  ctx.fillStyle=isDark?"rgba(255,255,255,0.2)":"rgba(0,0,0,0.2)";
+  ctx.font="9px Satoshi,sans-serif";ctx.textAlign="left";ctx.textBaseline="top";
+  ctx.fillText("E →",4,4);
+
+  // molecule
+  ctx.save();ctx.translate(molX,oY);
+  drawMolecule(ctx,currentMol,activeMode,isNear,phase);
+  ctx.restore();
+}
+
+function drawMolecule(ctx,molKey,activeMode,isNear,phase){
+  const vm=activeMode?.id||"";
+  const vibAmp=isNear?8*Math.sin(phase):0;
+
+  function bond(x1,y1,x2,y2){
+    ctx.beginPath();ctx.moveTo(x1,y1);ctx.lineTo(x2,y2);
+    ctx.strokeStyle="rgba(160,160,160,0.7)";ctx.lineWidth=3;ctx.stroke();
+  }
+  function atom(x,y,r,col,label,fs=12){
+    ctx.beginPath();ctx.arc(x,y,r,0,Math.PI*2);
+    ctx.fillStyle=col;ctx.fill();
+    ctx.strokeStyle="rgba(255,255,255,0.2)";ctx.lineWidth=1;ctx.stroke();
+    ctx.fillStyle="#fff";ctx.font=`bold ${fs}px Satoshi,sans-serif`;
+    ctx.textAlign="center";ctx.textBaseline="middle";ctx.fillText(label,x,y);
+  }
+
+  if(molKey==="H2O"){
+    const ang=Math.PI/5;
+    const bondLen=36;
+    if(vm==="rot"){
+      ctx.rotate(vibAmp*0.08);
+    }
+    let leftLen=bondLen+(vm==="sym"?vibAmp:(vm==="asym"?vibAmp:0));
+    let rightLen=bondLen+(vm==="sym"?vibAmp:(vm==="asym"?-vibAmp:0));
+    let hLx=-Math.sin(ang)*leftLen, hLy=Math.cos(ang)*leftLen-8;
+    let hRx= Math.sin(ang)*rightLen, hRy=Math.cos(ang)*rightLen-8;
+    const bendOff=vm==="bend"?vibAmp*0.15:0;
+    bond(hLx,hLy,0,8);bond(0,8,hRx,hRy);
+    atom(hLx,hLy,14,"rgba(200,120,120,0.85)","H",10);
+    atom(hRx,hRy,14,"rgba(200,120,120,0.85)","H",10);
+    atom(0,8+bendOff,18,"rgba(80,120,200,0.85)","O",11);
+    if(isNear&&activeMode){
+      if(vm==="rot"){
+        drawDipole(0,-20,ctx,26);
+      } else if(activeMode.irActive){
+        const dLen=26*(1+0.6*Math.sin(phase));
+        drawDipole(0,-(20+dLen*0.3),ctx,dLen);
+      }
+    } else if(MOLECULES.H2O.hasDipole){
+      drawDipole(0,-20,ctx,26);
+    }
+
+  } else if(molKey==="CO2"){
+    const sep=65;
+    const rotateForAsym=vm==="asym";
+    if(rotateForAsym) ctx.rotate(Math.PI/2);
+    let oLx=-(sep+(vm==="sym"?vibAmp:vm==="asym"?vibAmp:0));
+    let oRx= (sep+(vm==="sym"?vibAmp:vm==="asym"?-vibAmp:0));
+    let cY=vm==="bend"?vibAmp*0.5:0;
+    bond(oLx,0,0,cY);bond(0,cY,oRx,0);
+    atom(oLx,0,16,"rgba(200,80,80,0.85)","O",10);
+    atom(oRx,0,16,"rgba(200,80,80,0.85)","O",10);
+    atom(0,cY,18,"rgba(80,160,80,0.85)","C",11);
+    if(isNear&&activeMode&&activeMode.irActive){
+      if(vm==="asym"){
+        const asym=Math.sin(phase);
+        const dLen=26*Math.abs(asym);
+        drawDipoleHorizontal(ctx,dLen,asym<0,true);
+      } else {
+        const dScale=0.8*Math.sin(phase);
+        drawDipole(0,cY-14-Math.abs(dScale)*20,ctx,20,dScale<0);
+      }
+    } else {
+      ctx.fillStyle="rgba(150,150,150,0.5)";
+      ctx.font="10px Satoshi,sans-serif";ctx.textAlign="center";ctx.textBaseline="top";
+      ctx.fillText("μ = 0",0,26);
+    }
+
+  } else if(molKey==="N2"){
+    const sep=32;
+    bond(-sep,0,sep,0);
+    atom(-sep,0,15,"rgba(80,100,200,0.85)","N",10);
+    atom(sep,0,15,"rgba(80,100,200,0.85)","N",10);
+    ctx.fillStyle="rgba(150,150,150,0.5)";
+    ctx.font="10px Satoshi,sans-serif";ctx.textAlign="center";ctx.textBaseline="top";
+    ctx.fillText("μ = 0",0,22);
+
+  } else if(molKey==="HCl"){
+    const d=40+vibAmp*(vm==="vib"?1:0);
+    if(vm==="rot") ctx.rotate(vibAmp*0.08);
+    bond(-d*0.25,0,d*0.75,0);
+    atom(-d*0.25,0,14,"rgba(200,200,120,0.85)","H",10);
+    atom(d*0.75,0,20,"rgba(80,180,80,0.85)","Cl",9);
+    if(isNear&&activeMode){
+      if(vm==="rot"){
+        drawDipoleHorizontal(ctx,26,false,true);
+      } else if(activeMode.irActive){
+        const dLen=26*(1+0.6*Math.sin(phase));
+        drawDipoleHorizontal(ctx,dLen,false,true);
+      }
+    } else if(MOLECULES.HCl.hasDipole){
+      drawDipoleHorizontal(ctx,26,false,true);
+    }
+  }
+}
+
+// ── Main UI update ──
+function updateUI(){
+  const hz=sliderToHz(sliderVal);
+  document.getElementById("freqVal").textContent=hz2display(hz);
+  document.getElementById("lambdaVal").textContent="λ = "+hz2lambda(hz);
+  document.getElementById("regionBadge").textContent=getRegion(hz);
+  const activeMode=getActiveMode(hz);
+  document.getElementById("modeDesc").textContent=activeMode?activeMode.desc:"";
+  drawEmBar();
+  buildCards();
+  drawAbsChart();
+}
+
+// ── Animation loop ──
+function animate(){
+  const hz=sliderToHz(sliderVal);
+  const tFreq=(Math.log10(hz)-LOG_MIN)/(LOG_MAX-LOG_MIN);
+  const speed=0.02+tFreq*0.12;
+  phase+=speed;
+  drawWave();
+  animFrame=requestAnimationFrame(animate);
+}
+
+// ── Slider ──
+document.getElementById("freqSlider").addEventListener("input",e=>{
+  sliderVal=parseInt(e.target.value);
+  updateUI();
+});
+document.addEventListener("keydown",e=>{
+  if(e.key==="ArrowRight"){sliderVal=Math.min(1000,sliderVal+5);document.getElementById("freqSlider").value=sliderVal;updateUI();}
+  if(e.key==="ArrowLeft") {sliderVal=Math.max(0,sliderVal-5);document.getElementById("freqSlider").value=sliderVal;updateUI();}
+});
+
+// ── Init ──
+buildTabs();
+updateAtmSection();
+updateUI();
+animate();
+
+window.addEventListener("resize",()=>{drawEmBar();drawAbsChart();});
+</script>
+</body>
+</html>
